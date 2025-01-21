@@ -1,4 +1,4 @@
-# $ErrorActionPreference = 'Continue'
+ $ErrorActionPreference = 'Continue'
 # # Function to check and return the available Python command
 # function Get-PythonCommand {
 #     $commands = @('python3', 'python')
@@ -13,24 +13,24 @@
 # }
 
 # # Check if npm is available
-# $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-# if ($null -ne $npmCmd) {
-#     $NPM_CMD = "npm"
-# } else {
-#     Write-Host "Node is not installed."
-#     Exit 1
-# }
+$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+ if ($null -ne $npmCmd) {
+     $NPM_CMD = "npm"
+ } else {
+     Write-Host "Node is not installed."
+     Exit 1
+ }
 
 # # Install dependencies and build the project
-# cd ".\frontend\palworld-pal-editor-webui"
-# & $NPM_CMD install
-# & $NPM_CMD run build
+cd ".\frontend\palworld-pal-editor-webui"
+& $NPM_CMD install
+& $NPM_CMD run build
 
-# cd "..\..\"
+cd "..\..\"
 # # Move the build directory
-# Remove-Item ".\src\palworld_pal_editor\webui" -Recurse -Force
-# New-Item -Path ".\src\palworld_pal_editor\webui" -ItemType "directory"
-# Move-Item -Path ".\frontend\palworld-pal-editor-webui\dist\*" -Destination ".\src\palworld_pal_editor\webui" -Force
+Remove-Item ".\src\palworld_pal_editor\webui" -Recurse -Force
+New-Item -Path ".\src\palworld_pal_editor\webui" -ItemType "directory"
+Move-Item -Path ".\frontend\palworld-pal-editor-webui\dist\*" -Destination ".\src\palworld_pal_editor\webui" -Force
 
 
 # # Determine the appropriate Python command

@@ -414,3 +414,54 @@ def transfer_pal():
         return reply(1, None, f"Error getting pal data: {str(e)}")
         
     return reply(0)
+
+
+@pal_blueprint.route("/import_pal", methods=["POST"])
+@jwt_required()
+def import_pal():
+    PlayerUId = request.json.get("PlayerUId")
+    pal_data = request.json.get("pal_data")
+    
+    if PlayerUId == "PAL_BASE_WORKER_BTN":
+        LOGGER.warning("Directly importing pal to basecamp is not yet supported.")
+        return reply(1, None, f"Directly importing pal to basecamp is not yet supported.")
+    
+    try:
+        # 创建一个新的数据副本，以便修改
+        import_data = copy.deepcopy(pal_data)
+        
+        # 保存原始昵称
+        original_nickname = import_data.get("NickName") or import_data.get("DisplayName", "")
+        
+        # 更新所有者ID
+        import_data["OwnerPlayerUId"] = PlayerUId
+        
+        # 生成新的 group_id
+        import_data["group_id"] = None  # 让系统自动生成新的 group_id
+        
+        # 创建帕鲁实体
+        pal_entity = SaveManager().add_pal(PlayerUId, import_data)
+        if not pal_entity:
+            return reply(
+                1,
+                None,
+                f"Failed importing pal, likely your pal containers are full, check logs for detail.",
+            )
+            
+        # 立即更新昵称，覆盖 "!!!DUPED PAL!!!"
+        try:
+            pal_entity.NickName = original_nickname
+            LOGGER.info(f"Successfully restored original nickname: {original_nickname}")
+        except Exception as e:
+            LOGGER.error(f"Failed to restore original nickname: {e}")
+            
+    except Exception as e:
+        stack_trace = traceback.format_exc()
+        LOGGER.error(f"Error importing pal: {stack_trace}")
+        return reply(
+            1,
+            None,
+            f"Error happened during importing pal, check logs for detail. {stack_trace}",
+        )
+    
+    return reply(0, _pal_data(pal_entity))

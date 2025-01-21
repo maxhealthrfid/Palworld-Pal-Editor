@@ -12,6 +12,8 @@ const sourceSavePath = ref('')
 const palGuid = ref('')
 const showSourcePalPicker = ref(false)
 const sourcePals = ref([])
+const showImport = ref(false)
+const importPalData = ref('')
 
 watch(async () => palStore.SELECTED_PLAYER_ID, async () => {
     await nextTick();
@@ -137,6 +139,33 @@ async function transferPal() {
     closeTransferDialog()
 }
 
+async function showImportDialog() {
+    showImport.value = true
+    importPalData.value = ''
+}
+
+function closeImportDialog() {
+    showImport.value = false
+    importPalData.value = ''
+}
+
+async function importPal() {
+    if (!importPalData.value) return
+    
+    try {
+        const palData = JSON.parse(importPalData.value)
+        const response = await palStore.importPal(palData)
+        if (response) {
+            closeImportDialog()
+        }
+    } catch (error) {
+        console.error('Failed to import pal:', error)
+        alert('导入失败，请检查JSON格式是否正确')
+    } finally {
+        palStore.LOADING_FLAG.value = false
+    }
+}
+
 </script>
 
 <template>
@@ -153,6 +182,9 @@ async function transferPal() {
             <button class="transfer_pal" v-if="!palStore.BASE_PAL_BTN_CLK_FLAG"
                 :title="'Transfer Pal from another save'"
                 :disabled="palStore.LOADING_FLAG" @click="showTransferDialog" name="transfer_pal">↓</button>
+            <button class="import_pal" v-if="!palStore.BASE_PAL_BTN_CLK_FLAG"
+                :title="'Import Pal from JSON'"
+                :disabled="palStore.LOADING_FLAG" @click="showImportDialog" name="import_pal">📄</button>
         </div>
 
         <!-- Transfer Dialog -->
@@ -187,6 +219,26 @@ async function transferPal() {
                 <div class="button-group">
                     <button @click="transferPal" :disabled="!sourceSavePath || !palGuid">Transfer</button>
                     <button @click="closeTransferDialog">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Dialog -->
+        <div v-if="showImport" class="import-dialog">
+            <div class="import-content">
+                <h3>从JSON导入帕鲁</h3>
+                <div class="input-group">
+                    <label>帕鲁JSON数据:</label>
+                    <textarea 
+                        v-model="importPalData"
+                        placeholder="请粘贴帕鲁的JSON数据"
+                        rows="10"
+                    ></textarea>
+                </div>
+                
+                <div class="button-group">
+                    <button @click="importPal" :disabled="!importPalData">导入</button>
+                    <button @click="closeImportDialog">取消</button>
                 </div>
             </div>
         </div>
@@ -568,5 +620,60 @@ button.add_pal:disabled {
 
 .path-input input {
     flex: 1;
+}
+
+.import_pal {
+    background: none;
+    border: none;
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 0 5px;
+}
+
+.import_pal:hover {
+    color: var(--hover-color);
+}
+
+.import_pal:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.import-dialog {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.import-content {
+    background: rgba(45, 45, 45, 0.95);
+    padding: 30px;
+    border-radius: 12px;
+    min-width: 600px;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    color: #ffffff;
+}
+
+.import-content textarea {
+    width: 100%;
+    min-height: 200px;
+    background: rgba(60, 60, 60, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    color: #ffffff;
+    padding: 10px;
+    font-family: monospace;
+    resize: vertical;
 }
 </style>

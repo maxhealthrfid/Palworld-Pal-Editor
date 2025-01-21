@@ -1426,6 +1426,53 @@ export const usePalEditorStore = defineStore("paleditor", () => {
         }
     }
 
+    async function importPal(palData) {
+        let no_set_loading_flag = LOADING_FLAG.value;
+        if (!no_set_loading_flag) LOADING_FLAG.value = true;
+        
+        try {
+            const response = await POST("/api/pal/import_pal", {
+                PlayerUId: GET_PAL_OWNER_API_ID(),
+                pal_data: palData
+            });
+
+            if (response === false) {
+                if (!no_set_loading_flag) LOADING_FLAG.value = false;
+                return false;
+            }
+
+            if (response.status == 0) {
+                const pal_data = new PalData(response.data);
+                const temp_map = new Map();
+                PAL_MAP.value.forEach((v, k) => temp_map.set(k, v));
+                PAL_MAP.value.clear();
+                temp_map.forEach((v, k) => {
+                    PAL_MAP.value.set(k, v);
+                    if (v == SELECTED_PAL_DATA.value) {
+                        PAL_MAP.value.set(pal_data.InstanceId, pal_data);
+                    }
+                });
+                SELECTED_PAL_ID.value = pal_data.InstanceId;
+                SELECTED_PAL_DATA.value = pal_data;
+                if (!no_set_loading_flag) LOADING_FLAG.value = false;
+                return true;
+            } else if (response.status == 2) {
+                alert("Unauthorized Access, Please Login. ");
+                IS_LOCKED.value = true;
+                reset();
+            } else {
+                alert(`- importPal - Error occured: ${response.msg}`);
+            }
+        } catch (error) {
+            console.error('Error importing pal:', error);
+            alert('导入失败，请检查数据格式是否正确');
+        } finally {
+            if (!no_set_loading_flag) LOADING_FLAG.value = false;
+        }
+        
+        return false;
+    }
+
     return {
         MAX_LEVEL,
         MAX_INVALID_LEVEL,
@@ -1508,5 +1555,6 @@ export const usePalEditorStore = defineStore("paleditor", () => {
         shownDonate,
         transferPal,
         loadSourcePals,
+        importPal,
     };
 });

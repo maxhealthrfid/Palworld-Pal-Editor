@@ -432,19 +432,21 @@ class SaveManager:
                 pal_entity = PalEntity(pal_obj)
             else:
                 pal_obj = copy.deepcopy(pal_obj)
+                # 在创建实体前更新所有者ID和工会ID
+                pal_obj["value"]["RawData"]["properties"]["OwnerPlayerUId"] = {"value": player_uid}
+                pal_obj["value"]["RawData"]["properties"]["group_id"] = {"value": group_id}
+                
                 pal_entity = PalEntity(pal_obj)
                 pal_entity.InstanceId = pal_instanceId
                 pal_entity.SlotID = (container_id, slot_idx)
-                # I don't know why some captured pals have PlayerUId, 
-                # But having non-empty ID will cause the game to hide the duped pal
-                pal_entity.PlayerUId = PalObjects.EMPTY_UUID
-                # It seems the item container id is not necessarily referenced in the ItemContainerSaveData
-                # so just assign a randomly for now.
-                pal_entity._pal_param["EquipItemContainerId"] = PalObjects.PalContainerId(str(uuid.uuid4()))
-                # pal_entity._pal_param.pop("EquipItemContainerId", None)
-                # remove expedition status
+                
+                # 清除可能导致问题的字段
                 pal_entity._pal_param.pop("MapObjectConcreteInstanceIdAssignedToExpedition", None)
-                pal_entity.NickName = "!!!DUPED PAL!!!"
+                # 生成新的装备容器ID
+                pal_entity._pal_param["EquipItemContainerId"] = PalObjects.PalContainerId(str(uuid.uuid4()))
+                # 保持原始昵称，如果没有则使用默认名称
+                if not pal_entity.NickName:
+                    pal_entity.NickName = pal_entity.DisplayName or ""
 
             pal_entity.is_new_pal = True
 

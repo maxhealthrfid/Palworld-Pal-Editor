@@ -430,14 +430,48 @@ def import_pal():
         # 创建一个新的数据副本，以便修改
         import_data = copy.deepcopy(pal_data)
         
-        # 保存原始昵称
-        original_nickname = import_data.get("NickName") or import_data.get("DisplayName", "")
+        # 记录原始数据结构
+        LOGGER.info("Original data structure:")
+        LOGGER.info(f"import_data: {import_data}")
+        
+        # 确保数据结构正确
+        if not isinstance(import_data, dict):
+            LOGGER.error(f"import_data is not a dictionary: {type(import_data)}")
+            return reply(1, None, "Invalid data structure: root must be a dictionary")
+        
+        # 如果数据不是正确的嵌套结构，进行转换
+        if "value" not in import_data:
+            # 如果是扁平结构（直接是properties的内容），包装成正确的结构
+            if any(isinstance(v, dict) and "value" in v for v in import_data.values()):
+                # 已经是properties级别的结构
+                properties = import_data
+            else:
+                # 需要将每个值包装成{value: xxx}的形式
+                properties = {k: {"value": v} for k, v in import_data.items()}
+            
+            import_data = {
+                "value": {
+                    "RawData": {
+                        "properties": properties
+                    }
+                }
+            }
+            LOGGER.info("Converted to correct structure")
+        
+        # 确保所有必需的层级都存在
+        if "RawData" not in import_data["value"]:
+            import_data["value"]["RawData"] = {"properties": import_data["value"].get("properties", {})}
+        if "properties" not in import_data["value"]["RawData"]:
+            import_data["value"]["RawData"]["properties"] = {}
+            
+        properties = import_data["value"]["RawData"]["properties"]
+        
+        # 记录处理后的数据结构
+        LOGGER.info("Processed data structure:")
+        LOGGER.info(f"Final import_data: {import_data}")
         
         # 更新所有者ID
-        import_data["OwnerPlayerUId"] = PlayerUId
-        
-        # 生成新的 group_id
-        import_data["group_id"] = None  # 让系统自动生成新的 group_id
+        properties["OwnerPlayerUId"] = {"value": PlayerUId}
         
         # 创建帕鲁实体
         pal_entity = SaveManager().add_pal(PlayerUId, import_data)
@@ -448,12 +482,10 @@ def import_pal():
                 f"Failed importing pal, likely your pal containers are full, check logs for detail.",
             )
             
-        # 立即更新昵称，覆盖 "!!!DUPED PAL!!!"
-        try:
-            pal_entity.NickName = original_nickname
-            LOGGER.info(f"Successfully restored original nickname: {original_nickname}")
-        except Exception as e:
-            LOGGER.error(f"Failed to restore original nickname: {e}")
+        LOGGER.info(f"Successfully imported pal:")
+        LOGGER.info(f"  - NickName: {pal_entity.NickName}")
+        LOGGER.info(f"  - group_id: {pal_entity.group_id}")
+        LOGGER.info(f"  - OwnerPlayerUId: {pal_entity.OwnerPlayerUId}")
             
     except Exception as e:
         stack_trace = traceback.format_exc()

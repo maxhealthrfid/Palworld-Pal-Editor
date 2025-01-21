@@ -427,6 +427,17 @@ def import_pal():
         return reply(1, None, f"Directly importing pal to basecamp is not yet supported.")
     
     try:
+        # 获取目标玩家信息
+        target_player = SaveManager().get_player(PlayerUId)
+        if not target_player:
+            return reply(1, None, f"Target player {PlayerUId} not found")
+            
+        # 记录目标玩家信息
+        LOGGER.info(f"Target player info:")
+        LOGGER.info(f"  - Name: {target_player.NickName}")
+        LOGGER.info(f"  - PlayerUId: {target_player.PlayerUId}")
+        LOGGER.info(f"  - GroupId: {target_player.group_id}")
+        
         # 创建一个新的数据副本，以便修改
         import_data = copy.deepcopy(pal_data)
         
@@ -464,17 +475,47 @@ def import_pal():
         if "properties" not in import_data["value"]["RawData"]:
             import_data["value"]["RawData"]["properties"] = {}
             
-        properties = import_data["value"]["RawData"]["properties"]
+        # 更新所有者ID和工会ID - 在所有需要的地方
+        owner_id_struct = {
+            "struct_type": "Guid",
+            "struct_id": "00000000-0000-0000-0000-000000000000",
+            "id": None,
+            "value": str(target_player.PlayerUId),
+            "type": "StructProperty"
+        }
         
+        # 1. 更新外层key中的PlayerUId
+        if "key" in import_data and "PlayerUId" in import_data["key"]:
+            import_data["key"]["PlayerUId"] = owner_id_struct
+            
+        # 2. 更新RawData中的properties
+        import_data["value"]["RawData"]["properties"] = {
+            "OwnerPlayerUId": {"value": str(target_player.PlayerUId)},
+            "group_id": {"value": str(target_player.group_id)}
+        }
+        
+        # 3. 更新SaveParameter中的OwnerPlayerUId和group_id
+        if ("value" in import_data and "RawData" in import_data["value"] and 
+            "value" in import_data["value"]["RawData"] and 
+            "object" in import_data["value"]["RawData"]["value"] and
+            "SaveParameter" in import_data["value"]["RawData"]["value"]["object"]):
+            save_param = import_data["value"]["RawData"]["value"]["object"]["SaveParameter"]
+            if "value" in save_param:
+                save_param["value"]["OwnerPlayerUId"] = owner_id_struct
+                # 更新SaveParameter中的group_id
+                save_param["value"]["group_id"] = str(target_player.group_id)
+                
+        # 4. 更新RawData.value中的group_id
+        if ("value" in import_data and "RawData" in import_data["value"] and 
+            "value" in import_data["value"]["RawData"]):
+            import_data["value"]["RawData"]["value"]["group_id"] = str(target_player.group_id)
+                
         # 记录处理后的数据结构
         LOGGER.info("Processed data structure:")
         LOGGER.info(f"Final import_data: {import_data}")
         
-        # 更新所有者ID
-        properties["OwnerPlayerUId"] = {"value": PlayerUId}
-        
         # 创建帕鲁实体
-        pal_entity = SaveManager().add_pal(PlayerUId, import_data)
+        pal_entity = SaveManager().add_pal(str(target_player.PlayerUId), import_data)
         if not pal_entity:
             return reply(
                 1,

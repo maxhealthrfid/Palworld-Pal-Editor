@@ -396,11 +396,12 @@ class SaveManager:
             for pal in player._palbox.values():
                 pal.heal_pal() 
     
-    def add_pal(self, player_uid: str | UUID, pal_obj: dict = None) -> Optional[PalEntity]:
+    def add_pal(self, player_uid: str | UUID, pal_obj: dict = None, is_import: bool = False) -> Optional[PalEntity]:
         LOGGER.info(f"\n=== Starting add_pal ===")
         LOGGER.info(f"Input parameters:")
         LOGGER.info(f"  - player_uid: {player_uid}")
         LOGGER.info(f"  - pal_obj provided: {'Yes' if pal_obj else 'No'}")
+        LOGGER.info(f"  - is_import: {is_import}")
         
         player = self.get_player(player_uid)
         if player is None:
@@ -467,9 +468,9 @@ class SaveManager:
                 pal_entity.InstanceId = pal_instanceId
                 pal_entity.SlotID = (container_id, slot_idx)
                 pal_entity.PlayerUId = PalObjects.EMPTY_UUID
-                pal_entity._pal_param["EquipItemContainerId"] = PalObjects.PalContainerId(str(uuid.uuid4()))
                 pal_entity._pal_param.pop("MapObjectConcreteInstanceIdAssignedToExpedition", None)
-                pal_entity.NickName = "!!!DUPED PAL!!!"
+                if not is_import:
+                    pal_entity.NickName = "!!!DUPED PAL!!!"
                 LOGGER.info(f"  - Cloned from existing pal: {pal_entity.CharacterID}")
 
             pal_entity.is_new_pal = True

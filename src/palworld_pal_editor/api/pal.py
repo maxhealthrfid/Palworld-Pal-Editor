@@ -447,7 +447,7 @@ def import_pal():
         
         # 首先创建一个基础PAL实体
         LOGGER.info("\nCreating base PAL entity...")
-        base_pal = SaveManager().add_pal(str(target_player.PlayerUId))
+        base_pal = SaveManager().add_pal(str(target_player.PlayerUId), None, is_import=True)
         if not base_pal:
             return reply(1, None, "Failed to create base PAL entity")
         
@@ -493,7 +493,7 @@ def import_pal():
         
         # 使用更新后的数据重新创建PAL实体
         LOGGER.info("\nRecreating PAL entity with updated data...")
-        pal_entity = SaveManager().add_pal(str(target_player.PlayerUId), base_data)
+        pal_entity = SaveManager().add_pal(str(target_player.PlayerUId), base_data, is_import=True)
         if not pal_entity:
             return reply(
                 1,
@@ -531,7 +531,7 @@ def import_pal(target_player: PlayerEntity, import_data: dict) -> Optional[PalEn
         LOGGER.info(json.dumps(import_data, cls=CustomEncoder, indent=2))
         
         # 首先创建一个基础PAL实体
-        base_pal = SaveManager().add_pal(str(target_player.PlayerUId))
+        base_pal = SaveManager().add_pal(str(target_player.PlayerUId), None, is_import=True)
         if not base_pal:
             raise Exception("Failed to create base PAL entity")
         

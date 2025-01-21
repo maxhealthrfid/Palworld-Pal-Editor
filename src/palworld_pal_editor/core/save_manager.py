@@ -5,6 +5,7 @@ import shutil
 import traceback
 from typing import Optional
 import uuid
+import json
 
 from palworld_save_tools.gvas import GvasFile
 from palworld_save_tools.archive import FArchiveReader, FArchiveWriter, UUID
@@ -396,19 +397,35 @@ class SaveManager:
                 pal.heal_pal() 
     
     def add_pal(self, player_uid: str | UUID, pal_obj: dict = None) -> Optional[PalEntity]:
+        LOGGER.info(f"\n=== Starting add_pal ===")
+        LOGGER.info(f"Input parameters:")
+        LOGGER.info(f"  - player_uid: {player_uid}")
+        LOGGER.info(f"  - pal_obj provided: {'Yes' if pal_obj else 'No'}")
+        
         player = self.get_player(player_uid)
         if player is None:
             LOGGER.warning(f"Player {player_uid} not found")
             return None
         
+        LOGGER.info(f"\nPlayer info:")
+        LOGGER.info(f"  - Nickname: {player.NickName}")
+        LOGGER.info(f"  - Group ID: {player.group_id}")
+        
         player_container_ids = [player.OtomoCharacterContainerId, player.PalStorageContainerId]
+        LOGGER.info(f"\nChecking containers:")
+        LOGGER.info(f"  - Available containers: {player_container_ids}")
         
         pal_container = None
         for id in player_container_ids:
             if (container := self.container_data.get_container(id)) is not None:
                 if container.get_empty_slot() != -1:
                     pal_container = container
+                    LOGGER.info(f"  - Found container with empty slot: {id}")
                     break
+                else:
+                    LOGGER.info(f"  - Container {id} is full")
+            else:
+                LOGGER.warning(f"  - Container {id} not found")
 
         if pal_container is None:
             LOGGER.info("No Empty Pal Slot")
@@ -418,48 +435,71 @@ class SaveManager:
         group_id = player.group_id
         group = self.group_data.get_group(group_id)
 
+        LOGGER.info(f"\nGenerating new pal:")
+        LOGGER.info(f"  - Initial Instance ID: {pal_instanceId}")
+        
         while pal_container.has_pal(pal_instanceId) or group.has_pal(pal_instanceId):
+            LOGGER.info(f"  - ID collision detected, generating new ID")
             pal_instanceId = toUUID(str(uuid.uuid4()))
+            LOGGER.info(f"  - New Instance ID: {pal_instanceId}")
 
         try:
+            LOGGER.info(f"\nAttempting to add pal to container:")
             if (slot_idx := pal_container.add_pal(pal_instanceId)) == -1:
+                LOGGER.error("Failed to add pal to container")
                 return None
+            LOGGER.info(f"  - Added to slot: {slot_idx}")
+            
             container_id = pal_container.ID
+            LOGGER.info(f"  - Container ID: {container_id}")
+            
+            LOGGER.info(f"\nAdding pal to group {group_id}")
             group.add_pal(pal_instanceId)
             
             if not pal_obj:
+                LOGGER.info("\nCreating new pal object")
                 pal_obj = PalObjects.PalSaveParameter(pal_instanceId, player_uid, container_id, slot_idx, group_id)
                 pal_entity = PalEntity(pal_obj)
             else:
+                LOGGER.info("\nCloning existing pal object")
                 pal_obj = copy.deepcopy(pal_obj)
-                # 在创建实体前更新所有者ID和工会ID
-                pal_obj["value"]["RawData"]["properties"]["OwnerPlayerUId"] = {"value": player_uid}
-                pal_obj["value"]["RawData"]["properties"]["group_id"] = {"value": group_id}
-                
                 pal_entity = PalEntity(pal_obj)
                 pal_entity.InstanceId = pal_instanceId
                 pal_entity.SlotID = (container_id, slot_idx)
-                
-                # 清除可能导致问题的字段
-                pal_entity._pal_param.pop("MapObjectConcreteInstanceIdAssignedToExpedition", None)
-                # 生成新的装备容器ID
+                pal_entity.PlayerUId = PalObjects.EMPTY_UUID
                 pal_entity._pal_param["EquipItemContainerId"] = PalObjects.PalContainerId(str(uuid.uuid4()))
-                # 保持原始昵称，如果没有则使用默认名称
-                if not pal_entity.NickName:
-                    pal_entity.NickName = pal_entity.DisplayName or ""
+                pal_entity._pal_param.pop("MapObjectConcreteInstanceIdAssignedToExpedition", None)
+                pal_entity.NickName = "!!!DUPED PAL!!!"
+                LOGGER.info(f"  - Cloned from existing pal: {pal_entity.CharacterID}")
 
             pal_entity.is_new_pal = True
 
+            LOGGER.info(f"\nAdding pal to player's collection")
             if not player.add_pal(pal_entity):
                 raise Exception("Duplicated Pal ID, Try Again!")
+            
+            LOGGER.info(f"\nAdding pal to entities list")
             self._entities_list.append(pal_obj)
-        except:
+            
+            LOGGER.info(f"\nPal creation successful:")
+            LOGGER.info(f"  - Instance ID: {pal_entity.InstanceId}")
+            LOGGER.info(f"  - Character ID: {pal_entity.CharacterID}")
+            LOGGER.info(f"  - Container ID: {pal_entity.ContainerId}")
+            LOGGER.info(f"  - Slot Index: {pal_entity.SlotIndex}")
+            LOGGER.info(f"  - Owner: {player.NickName} ({player.PlayerUId})")
+            
+        except Exception as e:
             LOGGER.error(f"Failed adding pal: {traceback.format_exc()}")
             return None
-        LOGGER.info(f"Added Pal {pal_entity} to Player {player}")
+            
+        LOGGER.info(f"\nSuccessfully added Pal {pal_entity} to Player {player}")
+        LOGGER.info("=== End add_pal ===\n")
         return pal_entity
 
     def save(self, file_path: str) -> bool:
+        LOGGER.info("\n=== Starting save operation ===")
+        LOGGER.info(f"Target save path: {file_path}")
+        
         if self.gvas_file is None:
             LOGGER.error("No gvas_file stored in save manager, aborting")
             return False
@@ -468,47 +508,102 @@ class SaveManager:
             return False
 
         output_path = Path(file_path).resolve() 
+        LOGGER.info(f"Resolved output path: {output_path}")
 
         if not output_path.exists():
-            LOGGER.warning(f"Path does not exist: {output_path}")
+            LOGGER.info(f"Output directory does not exist: {output_path}")
             if output_path.parent.exists():
                 output_path.mkdir(parents=True, exist_ok=True)
-                LOGGER.debug(f"Path {output_path} created")
+                LOGGER.info(f"Created output directory: {output_path}")
             else:
                 LOGGER.error(f"Parent path {output_path.parent} does not exist, skipping")
                 return False
             
         file_path: Path = output_path / "Level.sav"
+        LOGGER.info(f"Target Level.sav path: {file_path}")
 
         if output_path.exists():
             BK_FOLDER_NAME = "Palworld-Pal-Editor-Backup"
-            backup_dir = output_path / BK_FOLDER_NAME / f"{datetime.now().strftime(r'%Y-%m-%d_%H-%M-%S')}"
+            backup_dir = output_path.parent / f"{BK_FOLDER_NAME}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             try:
                 if output_path.exists():
-                    LOGGER.info(f"Saving backup of {output_path} to {backup_dir}")
+                    LOGGER.info(f"Creating backup:")
+                    LOGGER.info(f"  - Source: {output_path}")
+                    LOGGER.info(f"  - Destination: {backup_dir}")
                     shutil.copytree(self._file_path, backup_dir, 
                                     ignore=lambda dir, files: [f for f in files if not f == "Players" and not f.endswith('.sav')])
+                    LOGGER.info("Backup completed successfully")
                 else:
                     LOGGER.info(f"No existing directory to backup: {output_path}")
             except Exception as e:
                 LOGGER.error(f"Error backing up directory: {e}")
+                LOGGER.error(f"Stack trace: {traceback.format_exc()}")
                 return False
 
-        LOGGER.info("Saving Player Data...")
-        for player in self.player_mapping.values():
+        LOGGER.info("\nSaving Player Data...")
+        player_count = len(self.player_mapping.values())
+        LOGGER.info(f"Found {player_count} players to save")
+        for i, player in enumerate(self.player_mapping.values(), 1):
+            LOGGER.info(f"Saving player {i}/{player_count}: {player.NickName} ({player.PlayerUId})")
             self.save_player_sav(player, output_path)
 
-        LOGGER.info("Saving Level.sav...")
+        LOGGER.info("\nSaving Level.sav...")
+        LOGGER.info("Creating deep copy of gvas_file")
         gvas_file = copy.deepcopy(self.gvas_file)
-        LOGGER.info("Compressing Main GVAS file")
-        sav_data = compress_gvas_to_sav(
-            gvas_file.write(MAIN_SKIP_PROPERTIES), self._compression_times
-        )
+        
+        LOGGER.info("\n=== GVAS File Structure Before Compression ===")
+        LOGGER.info(f"Properties to skip: {MAIN_SKIP_PROPERTIES}")
+        
+        # 记录GVAS文件的基本属性
+        LOGGER.info("\nGVAS File Basic Info:")
+        LOGGER.info(f"  - Header: {getattr(gvas_file, 'header', 'N/A')}")
+        LOGGER.info(f"  - Save Game Version: {getattr(gvas_file, 'save_game_version', 'N/A')}")
+        LOGGER.info(f"  - Package Version: {getattr(gvas_file, 'package_version', 'N/A')}")
+        LOGGER.info(f"  - Engine Version Major: {getattr(gvas_file, 'engine_version_major', 'N/A')}")
+        LOGGER.info(f"  - Engine Version Minor: {getattr(gvas_file, 'engine_version_minor', 'N/A')}")
+        
+        # 记录主要属性
+        LOGGER.info("\nGVAS File Properties:")
+        try:
+            if hasattr(gvas_file, 'properties'):
+                for prop_name, prop_value in gvas_file.properties.items():
+                    LOGGER.info(f"\nProperty: {prop_name}")
+                    if isinstance(prop_value, dict):
+                        # 只记录第一层的键，避免过深的嵌套
+                        LOGGER.info(f"Keys: {list(prop_value.keys())}")
+                    else:
+                        LOGGER.info(f"Value: {prop_value}")
+        except Exception as prop_err:
+            LOGGER.error(f"Error dumping properties: {prop_err}")
+            LOGGER.error(traceback.format_exc())
+            
+        # 尝试写入并记录结果
+        LOGGER.info("\nAttempting to write GVAS file...")
+        try:
+            gvas_data = gvas_file.write(MAIN_SKIP_PROPERTIES)
+            LOGGER.info("Successfully wrote GVAS data")
+            LOGGER.info(f"GVAS data size: {len(gvas_data) if gvas_data else 'N/A'} bytes")
+            
+            sav_data = compress_gvas_to_sav(gvas_data, self._compression_times)
+            LOGGER.info("GVAS file compression successful")
+        except Exception as e:
+            LOGGER.error(f"Error during GVAS write/compression: {str(e)}")
+            LOGGER.error(f"Full traceback: {traceback.format_exc()}")
+            return False
 
-        LOGGER.info(f"Saving to {file_path}")
-        with file_path.open("wb") as file:
-            file.write(sav_data)
-        LOGGER.info(f"Saved to {file_path}")
+        LOGGER.info(f"\nWriting final save file:")
+        LOGGER.info(f"  - Path: {file_path}")
+        LOGGER.info(f"  - Size: {len(sav_data)} bytes")
+        try:
+            with file_path.open("wb") as file:
+                file.write(sav_data)
+            LOGGER.info("File written successfully")
+        except Exception as e:
+            LOGGER.error(f"Error writing save file: {e}")
+            LOGGER.error(f"Stack trace: {traceback.format_exc()}")
+            return False
+            
+        LOGGER.info("\n=== Save operation completed successfully ===\n")
         return True
     
     def load_player_sav(self, player_uid: str | UUID) -> GvasFile:

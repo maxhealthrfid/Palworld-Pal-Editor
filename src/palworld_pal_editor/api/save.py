@@ -48,13 +48,20 @@ def load():
 def save():
     path = request.json.get("WritePath", None)
     try:
+        # 如果没有提供路径，使用当前加载的存档路径
+        if not path:
+            if not Config.path:
+                return reply(1, msg="No save path specified and no default path available")
+            path = Config.path
+            
+        LOGGER.info(f"Saving to path: {path}")
         if SaveManager().save(path):
             return reply(0)
         return reply(1, msg=f"Path not available? {path}")
     except Exception as e:
         stack_trace = traceback.format_exc()
-        LOGGER.error(f"Error in patch_paldata {stack_trace}")
-        return reply(1, msg=f"Error occored during saving, check debug console. {stack_trace}")
+        LOGGER.error(f"Error in save: {stack_trace}")
+        return reply(1, msg=f"Error occurred during saving, check debug console. {stack_trace}")
 
 
 @save_blueprint.route("/passive_skills", methods=["GET"])

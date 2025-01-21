@@ -2,11 +2,14 @@ import copy
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required
 import traceback
+import json
+from typing import Optional
 
 from palworld_pal_editor.utils.util import reply
 
-from palworld_pal_editor.core import SaveManager, PalEntity
+from palworld_pal_editor.core import SaveManager, PalEntity, PlayerEntity
 from palworld_pal_editor.utils import LOGGER
+from palworld_save_tools.json_tools import CustomEncoder
 
 pal_blueprint = Blueprint("pal", __name__)
 
@@ -438,84 +441,59 @@ def import_pal():
         LOGGER.info(f"  - PlayerUId: {target_player.PlayerUId}")
         LOGGER.info(f"  - GroupId: {target_player.group_id}")
         
-        # 创建一个新的数据副本，以便修改
-        import_data = copy.deepcopy(pal_data)
-        
         # 记录原始数据结构
-        LOGGER.info("Original data structure:")
-        LOGGER.info(f"import_data: {import_data}")
+        LOGGER.info("Original import data structure:")
+        LOGGER.info(json.dumps(pal_data, cls=CustomEncoder, indent=2))
         
-        # 确保数据结构正确
-        if not isinstance(import_data, dict):
-            LOGGER.error(f"import_data is not a dictionary: {type(import_data)}")
-            return reply(1, None, "Invalid data structure: root must be a dictionary")
+        # 首先创建一个基础PAL实体
+        LOGGER.info("\nCreating base PAL entity...")
+        base_pal = SaveManager().add_pal(str(target_player.PlayerUId))
+        if not base_pal:
+            return reply(1, None, "Failed to create base PAL entity")
         
-        # 如果数据不是正确的嵌套结构，进行转换
-        if "value" not in import_data:
-            # 如果是扁平结构（直接是properties的内容），包装成正确的结构
-            if any(isinstance(v, dict) and "value" in v for v in import_data.values()):
-                # 已经是properties级别的结构
-                properties = import_data
-            else:
-                # 需要将每个值包装成{value: xxx}的形式
-                properties = {k: {"value": v} for k, v in import_data.items()}
+        # 获取基础PAL的数据结构
+        base_data = base_pal._pal_obj
+        LOGGER.info("\nBase PAL structure:")
+        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
+        
+        # 从导入数据中提取关键信息
+        import_param = pal_data.get("value", {}).get("RawData", {}).get("value", {}).get("object", {}).get("SaveParameter", {}).get("value", {})
+        
+        # 更新基础PAL的属性
+        base_param = base_data["value"]["RawData"]["value"]["object"]["SaveParameter"]["value"]
+        
+        # 保留这些关键ID不变
+        preserved_keys = ["InstanceId", "OwnerPlayerUId", "group_id", "ContainerId", "SlotIndex", 
+                         "EquipItemContainerId", "OwnedPalStorageContainerId", "OtomoCharacterContainerId"]
+        preserved_values = {k: base_param[k] for k in preserved_keys if k in base_param}
+        
+        # 更新其他属性
+        update_keys = ["CharacterID", "Level", "Rank", "Rank_HP", "Rank_Attack", "Rank_Defence", 
+                      "Rank_CraftSpeed", "Talent_HP", "Talent_Melee", "Talent_Shot", "Talent_Defense",
+                      "PassiveSkillList", "EquipWaza", "MasteredWaza", "Gender", "HasTowerVariant"]
+                      
+        LOGGER.info("\nUpdating PAL properties...")
+        for key in update_keys:
+            if key in import_param:
+                LOGGER.info(f"  - Updating {key}")
+                base_param[key] = copy.deepcopy(import_param[key])
+        
+        # 恢复保留的值
+        for key, value in preserved_values.items():
+            base_param[key] = value
             
-            import_data = {
-                "value": {
-                    "RawData": {
-                        "properties": properties
-                    }
-                }
-            }
-            LOGGER.info("Converted to correct structure")
-        
-        # 确保所有必需的层级都存在
-        if "RawData" not in import_data["value"]:
-            import_data["value"]["RawData"] = {"properties": import_data["value"].get("properties", {})}
-        if "properties" not in import_data["value"]["RawData"]:
-            import_data["value"]["RawData"]["properties"] = {}
-            
-        # 更新所有者ID和工会ID - 在所有需要的地方
-        owner_id_struct = {
-            "struct_type": "Guid",
-            "struct_id": "00000000-0000-0000-0000-000000000000",
-            "id": None,
-            "value": str(target_player.PlayerUId),
-            "type": "StructProperty"
+        # 设置昵称
+        base_param["NickName"] = {
+            "type": "StrProperty",
+            "value": import_param.get("NickName", {}).get("value", "Imported PAL")
         }
         
-        # 1. 更新外层key中的PlayerUId
-        if "key" in import_data and "PlayerUId" in import_data["key"]:
-            import_data["key"]["PlayerUId"] = owner_id_struct
-            
-        # 2. 更新RawData中的properties
-        import_data["value"]["RawData"]["properties"] = {
-            "OwnerPlayerUId": {"value": str(target_player.PlayerUId)},
-            "group_id": {"value": str(target_player.group_id)}
-        }
+        LOGGER.info("\nFinal PAL structure:")
+        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
         
-        # 3. 更新SaveParameter中的OwnerPlayerUId和group_id
-        if ("value" in import_data and "RawData" in import_data["value"] and 
-            "value" in import_data["value"]["RawData"] and 
-            "object" in import_data["value"]["RawData"]["value"] and
-            "SaveParameter" in import_data["value"]["RawData"]["value"]["object"]):
-            save_param = import_data["value"]["RawData"]["value"]["object"]["SaveParameter"]
-            if "value" in save_param:
-                save_param["value"]["OwnerPlayerUId"] = owner_id_struct
-                # 更新SaveParameter中的group_id
-                save_param["value"]["group_id"] = str(target_player.group_id)
-                
-        # 4. 更新RawData.value中的group_id
-        if ("value" in import_data and "RawData" in import_data["value"] and 
-            "value" in import_data["value"]["RawData"]):
-            import_data["value"]["RawData"]["value"]["group_id"] = str(target_player.group_id)
-                
-        # 记录处理后的数据结构
-        LOGGER.info("Processed data structure:")
-        LOGGER.info(f"Final import_data: {import_data}")
-        
-        # 创建帕鲁实体
-        pal_entity = SaveManager().add_pal(str(target_player.PlayerUId), import_data)
+        # 使用更新后的数据重新创建PAL实体
+        LOGGER.info("\nRecreating PAL entity with updated data...")
+        pal_entity = SaveManager().add_pal(str(target_player.PlayerUId), base_data)
         if not pal_entity:
             return reply(
                 1,
@@ -523,7 +501,11 @@ def import_pal():
                 f"Failed importing pal, likely your pal containers are full, check logs for detail.",
             )
             
-        LOGGER.info(f"Successfully imported pal:")
+        # 删除原始的基础PAL
+        LOGGER.info("\nCleaning up base PAL...")
+        SaveManager().delete_pal(base_pal.InstanceId)
+            
+        LOGGER.info(f"\nSuccessfully imported pal:")
         LOGGER.info(f"  - NickName: {pal_entity.NickName}")
         LOGGER.info(f"  - group_id: {pal_entity.group_id}")
         LOGGER.info(f"  - OwnerPlayerUId: {pal_entity.OwnerPlayerUId}")
@@ -538,3 +520,55 @@ def import_pal():
         )
     
     return reply(0, _pal_data(pal_entity))
+
+
+def import_pal(target_player: PlayerEntity, import_data: dict) -> Optional[PalEntity]:
+    """Import a pal from json data"""
+    LOGGER.info("=== Start import_pal ===")
+    try:
+        # 记录原始数据结构
+        LOGGER.info("Original import data structure:")
+        LOGGER.info(json.dumps(import_data, cls=CustomEncoder, indent=2))
+        
+        # 首先创建一个基础PAL实体
+        base_pal = SaveManager().add_pal(str(target_player.PlayerUId))
+        if not base_pal:
+            raise Exception("Failed to create base PAL entity")
+        
+        base_data = base_pal._pal_obj
+        LOGGER.info("\nBase PAL structure:")
+        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
+        
+        # 从导入数据中提取关键信息
+        pal_data = import_data.get("value", {}).get("RawData", {}).get("value", {}).get("object", {}).get("SaveParameter", {}).get("value", {})
+        
+        # 更新基本属性
+        for key in ["CharacterID", "Gender", "NickName", "Level", "Exp", "HP", "FullStomach"]:
+            if key in pal_data:
+                base_pal._pal_param[key] = pal_data[key]
+        
+        # 确保数组属性存在并正确初始化
+        array_properties = ["EquipWaza", "MasteredWaza", "PassiveSkillList", "EquipItem"]
+        for prop in array_properties:
+            if prop in pal_data:
+                base_pal._pal_param[prop] = pal_data[prop]
+            else:
+                base_pal._pal_param[prop] = PalObjects.ArrayProperty("EnumProperty", {"values": []})
+        
+        # 处理状态点数据
+        status_lists = ["GotStatusPointList", "GotExStatusPointList"]
+        for status_list in status_lists:
+            if status_list in pal_data:
+                base_pal._pal_param[status_list] = pal_data[status_list]
+        
+        LOGGER.info("\nFinal PAL structure:")
+        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
+        
+        # 使用更新后的数据重新创建PAL实体
+        return base_pal
+        
+    except Exception as e:
+        LOGGER.error(f"Failed to import pal: {traceback.format_exc()}")
+        return None
+    finally:
+        LOGGER.info("=== End import_pal ===\n")

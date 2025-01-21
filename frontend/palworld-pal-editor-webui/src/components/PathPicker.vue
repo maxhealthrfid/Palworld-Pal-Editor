@@ -8,6 +8,8 @@ import InputArea from './modules/InputArea.vue'
 import BarButton from './modules/BarButton.vue'
 const palStore = usePalEditorStore()
 
+const emit = defineEmits(['selected', 'close'])
+
 const sortedPathChildren = computed(() => {
     return Array.from(palStore.PATH_CONTEXT.entries()).sort((a, b) => {
         if (a[1].isDir && !b[1].isDir) {
@@ -22,8 +24,7 @@ const sortedPathChildren = computed(() => {
 
 const savePickerResult = () => {
     palStore.SHOW_FILE_PICKER = false
-    palStore.PAL_GAME_SAVE_PATH = palStore.PAL_FILE_PICKER_PATH
-
+    emit('selected', palStore.PAL_FILE_PICKER_PATH)
 }
 
 // const scrollElement = ref(null);
@@ -46,6 +47,7 @@ const savePickerResult = () => {
 // });
 const abort = () => {
     palStore.SHOW_FILE_PICKER = false
+    emit('close')
 }
 </script>
 

@@ -1,10 +1,17 @@
 <script setup>
 import { usePalEditorStore } from '@/stores/paleditor'
 import { ref, computed, reactive, onMounted, nextTick, watch } from "vue";
+import PathPicker from './PathPicker.vue'
 
 const palStore = usePalEditorStore()
 
 const palListContainer = ref(null);
+
+const showTransfer = ref(false)
+const sourceSavePath = ref('')
+const palGuid = ref('')
+const showSourcePalPicker = ref(false)
+const sourcePals = ref([])
 
 watch(async () => palStore.SELECTED_PLAYER_ID, async () => {
     await nextTick();
@@ -77,6 +84,59 @@ function get_filtered_pal_list() {
     return Array.from(palStore.PAL_MAP.values()).filter(pal => !palStore.isFilteredPal(pal))
 }
 
+async function showTransferDialog() {
+    showTransfer.value = true
+    sourcePals.value = []
+}
+
+function closeTransferDialog() {
+    showTransfer.value = false
+    sourceSavePath.value = ''
+    palGuid.value = ''
+    sourcePals.value = []
+}
+
+async function loadSourcePals() {
+    if (!sourceSavePath.value) return
+    
+    try {
+        const response = await palStore.loadSourcePals(sourceSavePath.value)
+        if (response && response.status === 0) {
+            sourcePals.value = response.data.filter(pal => pal.in_owner_palbox)
+        }
+    } catch (error) {
+        console.error('Failed to load source pals:', error)
+    }
+}
+
+async function selectSourcePath() {
+    showSourcePalPicker.value = true
+    await palStore.show_file_picker()
+}
+
+function onSourcePathSelected(path) {
+    sourceSavePath.value = path
+    showSourcePalPicker.value = false
+    loadSourcePals()
+}
+
+function onSourcePathPickerClose() {
+    showSourcePalPicker.value = false
+}
+
+async function transferPal() {
+    if (!sourceSavePath.value || !palGuid.value) return
+    
+    // 检查是否已加载存档
+    if (!palStore.SAVE_LOADED_FLAG) {
+        alert("Please load a save file first before transferring pals.")
+        return
+    }
+    
+    await palStore.transferPal(sourceSavePath.value, palGuid.value)
+    closeTransferDialog()
+}
+
 </script>
 
 <template>
@@ -90,6 +150,49 @@ function get_filtered_pal_list() {
             <button class="add_pal" v-if="!palStore.BASE_PAL_BTN_CLK_FLAG"
                 :title="`Add Pal for Player ${palStore.PLAYER_MAP.get(palStore.SELECTED_PLAYER_ID).name}`"
                 :disabled="palStore.LOADING_FLAG" @click="palStore.addPal" name="add_pal">+</button>
+            <button class="transfer_pal" v-if="!palStore.BASE_PAL_BTN_CLK_FLAG"
+                :title="'Transfer Pal from another save'"
+                :disabled="palStore.LOADING_FLAG" @click="showTransferDialog" name="transfer_pal">↓</button>
+        </div>
+
+        <!-- Transfer Dialog -->
+        <div v-if="showTransfer" class="transfer-dialog">
+            <div class="transfer-content">
+                <h3>Transfer Pal from Another Save</h3>
+                <div class="input-group">
+                    <label>Source Save Path:</label>
+                    <div class="path-input">
+                        <input type="text" v-model="sourceSavePath" placeholder="Enter source save path" readonly>
+                        <button @click="selectSourcePath">Browse</button>
+                    </div>
+                </div>
+                
+                <div v-if="sourcePals.length > 0" class="pal-list">
+                    <h4>Select Pal to Transfer:</h4>
+                    <div class="pal-grid">
+                        <div v-for="pal in sourcePals" 
+                             :key="pal.InstanceId" 
+                             class="pal-item"
+                             :class="{ selected: palGuid === pal.InstanceId }"
+                             @click="palGuid = pal.InstanceId">
+                            <img :src="`/image/pals/${pal.IconAccessKey}`" :alt="pal.DisplayName">
+                            <div class="pal-info">
+                                <span class="pal-name">{{ pal.DisplayName }}</span>
+                                <span class="pal-level">Lv.{{ pal.Level }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button @click="transferPal" :disabled="!sourceSavePath || !palGuid">Transfer</button>
+                    <button @click="closeTransferDialog">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showSourcePalPicker" class="path-picker-overlay">
+            <PathPicker @selected="onSourcePathSelected" @close="onSourcePathPickerClose" />
         </div>
 
         <div class="overflow-list" ref="palListContainer">
@@ -303,5 +406,167 @@ button.add_pal:disabled {
     box-shadow: 0 0 0;
     filter: grayscale(100%);
     cursor: not-allowed;
+}
+
+.transfer-dialog {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.transfer-content {
+    background: rgba(45, 45, 45, 0.95);
+    padding: 30px;
+    border-radius: 12px;
+    min-width: 400px;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    color: #ffffff;
+}
+
+.transfer-content h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #ffffff;
+    font-size: 1.4em;
+}
+
+.input-group {
+    margin: 15px 0;
+    background: rgba(60, 60, 60, 0.5);
+    padding: 15px;
+    border-radius: 8px;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 8px;
+    background: rgba(80, 80, 80, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    color: #ffffff;
+}
+
+.pal-list {
+    margin-top: 20px;
+    background: rgba(60, 60, 60, 0.5);
+    padding: 15px;
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.pal-list h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #ffffff;
+}
+
+.pal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    padding: 10px;
+}
+
+.pal-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px;
+    background: rgba(50, 50, 50, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pal-item:hover {
+    background: rgba(70, 70, 70, 0.9);
+}
+
+.pal-item.selected {
+    background: rgba(61, 74, 109, 0.9);
+    border: 2px solid #4a90e2;
+}
+
+.pal-item img {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    margin-bottom: 8px;
+}
+
+.pal-info {
+    text-align: center;
+}
+
+.pal-name {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.pal-level {
+    display: block;
+    font-size: 0.9em;
+    color: #888;
+}
+
+.path-picker-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1100;
+}
+
+.transfer_pal {
+    background: none;
+    border: none;
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 0 5px;
+}
+
+.transfer_pal:hover {
+    color: var(--hover-color);
+}
+
+.transfer_pal:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.path-input {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.path-input input {
+    flex: 1;
 }
 </style>

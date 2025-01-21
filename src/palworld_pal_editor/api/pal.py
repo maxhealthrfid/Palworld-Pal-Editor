@@ -242,3 +242,175 @@ def dupe_pal():
                 f"Error happened during duping pal, check logs for detail. {traceback.format_exc()}",
             )
     return reply(0, _pal_data(pal_entity))
+
+
+@pal_blueprint.route("/source_pals", methods=["POST"])
+@jwt_required()
+def source_pals():
+    source_save = request.json.get("source_save")
+    
+    if not source_save:
+        return reply(1, None, "Missing source_save parameter")
+    
+    # 保存当前存档路径
+    current_save = None
+    try:
+        LOGGER.info("\n=== Loading Source Save for Pal Selection ===")
+        LOGGER.info(f"Opening source save: {source_save}")
+        
+        # 获取当前存档的所有信息，用于后续恢复
+        current_manager = SaveManager()
+        current_save = current_manager._file_path  # 使用正确的属性名
+        LOGGER.info(f"\nCurrent save path: {current_save}")
+        
+        current_players = []
+        for player in current_manager.get_players():
+            current_players.append({
+                'name': player.NickName,
+                'uid': str(player.PlayerUId)
+            })
+        LOGGER.info("\nCurrent save players:")
+        for player in current_players:
+            LOGGER.info(f"  Player: {player['name']} - {player['uid']}")
+        
+        # 打开源存档
+        LOGGER.info("\nOpening source save...")
+        current_manager.open(source_save)
+        
+        # 获取源存档信息
+        source_players = current_manager.get_players()
+        LOGGER.info("\nSource save players:")
+        for player in source_players:
+            LOGGER.info(f"  Player: {player.NickName}")
+            LOGGER.info(f"    - Player UID: {player.PlayerUId}")
+            LOGGER.info(f"    - Pal count: {len(player.get_pals())}")
+            LOGGER.info(f"    - Container IDs: {player.PalStorageContainerId}, {player.OtomoCharacterContainerId}")
+        
+        # 获取所有玩家的所有宠物
+        all_pals = []
+        for player in source_players:
+            for pal in player.get_pals():
+                LOGGER.info(f"\nFound pal in source save:")
+                LOGGER.info(f"  - Display Name: {pal.DisplayName}")
+                LOGGER.info(f"  - Character ID: {pal.CharacterID}")
+                LOGGER.info(f"  - Instance ID: {pal.InstanceId}")
+                LOGGER.info(f"  - Owner: {player.NickName} ({player.PlayerUId})")
+                LOGGER.info(f"  - Container ID: {pal.ContainerId}")
+                LOGGER.info(f"  - Slot Index: {pal.SlotIndex}")
+                all_pals.append(_pal_data(pal))
+                
+        LOGGER.info(f"\nTotal pals found in source save: {len(all_pals)}")
+        
+        # 重新打开原存档
+        LOGGER.info(f"\nReopening original save: {current_save}")
+        current_manager.open(current_save)
+        
+        # 验证原存档是否正确恢复
+        restored_players = current_manager.get_players()
+        LOGGER.info("\nVerifying restored save:")
+        for player in restored_players:
+            LOGGER.info(f"  Player: {player.NickName} - {player.PlayerUId}")
+        
+        return reply(0, all_pals)
+            
+    except Exception as e:
+        LOGGER.error(f"Error getting source pals: {traceback.format_exc()}")
+        # 确保在发生错误时也恢复原存档
+        if current_save:
+            LOGGER.info(f"\nReopening original save after error: {current_save}")
+            try:
+                SaveManager().open(current_save)
+            except Exception as restore_error:
+                LOGGER.error(f"Error restoring original save: {traceback.format_exc()}")
+        return reply(1, None, f"Error getting source pals: {str(e)}")
+
+
+@pal_blueprint.route("/transfer_pal", methods=["POST"])
+@jwt_required()
+def transfer_pal():
+    source_save = request.json.get("source_save")
+    pal_guid = request.json.get("pal_guid")
+    target_player_uid = request.json.get("target_player_uid")
+    
+    LOGGER.info("\n=== Starting Pal Transfer Process ===")
+    LOGGER.info(f"Source save path: {source_save}")
+    LOGGER.info(f"Target player UID: {target_player_uid}")
+    LOGGER.info(f"Pal GUID to transfer: {pal_guid}")
+    
+    if not all([source_save, pal_guid, target_player_uid]):
+        LOGGER.error("Missing required parameters")
+        return reply(1, None, "Missing required parameters")
+    
+    # 保存当前存档路径
+    current_save = None
+    try:
+        # 获取当前存档的所有信息，用于后续恢复
+        current_manager = SaveManager()
+        current_save = current_manager._file_path  # 使用正确的属性名
+        LOGGER.info(f"\nCurrent save path: {current_save}")
+        
+        current_players = []
+        for player in current_manager.get_players():
+            current_players.append({
+                'name': player.NickName,
+                'uid': str(player.PlayerUId)
+            })
+        LOGGER.info("\nCurrent save players:")
+        for player in current_players:
+            LOGGER.info(f"  Player: {player['name']} - {player['uid']}")
+        
+        # 打开源存档并获取帕鲁数据
+        LOGGER.info("\n=== Opening Source Save and Getting Pal Data ===")
+        LOGGER.info(f"Opening source save at: {source_save}")
+        current_manager.open(source_save)
+        
+        source_pal = None
+        for player in current_manager.get_players():
+            if pal := player.get_pal(pal_guid, disable_warning=True):
+                source_pal = pal
+                LOGGER.info(f"\nFound source pal:")
+                LOGGER.info(f"  - Display Name: {pal.DisplayName}")
+                LOGGER.info(f"  - Character ID: {pal.CharacterID}")
+                LOGGER.info(f"  - Instance ID: {pal.InstanceId}")
+                LOGGER.info(f"  - Owner: {player.NickName} ({player.PlayerUId})")
+                LOGGER.info(f"  - Container ID: {pal.ContainerId}")
+                LOGGER.info(f"  - Slot Index: {pal.SlotIndex}")
+                break
+                
+        if not source_pal:
+            LOGGER.error(f"Source pal {pal_guid} not found in source save")
+            # 重新打开原存档
+            LOGGER.info(f"\nReopening original save: {current_save}")
+            current_manager.open(current_save)
+            return reply(1, None, f"Source pal {pal_guid} not found")
+            
+        # 获取并记录帕鲁的完整数据
+        pal_data = source_pal.dump_obj()
+        LOGGER.info("\nPal data dump:")
+        LOGGER.info(pal_data)
+        
+        # 重新打开原存档
+        LOGGER.info(f"\nReopening original save: {current_save}")
+        current_manager.open(current_save)
+        
+        # 验证原存档是否正确恢复
+        restored_players = current_manager.get_players()
+        LOGGER.info("\nVerifying restored save:")
+        for player in restored_players:
+            LOGGER.info(f"  Player: {player.NickName} - {player.PlayerUId}")
+        
+        return reply(0, _pal_data(source_pal))
+            
+    except Exception as e:
+        LOGGER.error("\n=== Transfer Failed ===")
+        LOGGER.error(f"Error getting pal data: {traceback.format_exc()}")
+        # 确保在发生错误时也恢复原存档
+        if current_save:
+            LOGGER.info(f"\nReopening original save after error: {current_save}")
+            try:
+                SaveManager().open(current_save)
+            except Exception as restore_error:
+                LOGGER.error(f"Error restoring original save: {traceback.format_exc()}")
+        return reply(1, None, f"Error getting pal data: {str(e)}")
+        
+    return reply(0)

@@ -1368,6 +1368,64 @@ export const usePalEditorStore = defineStore("paleditor", () => {
         return res;
     }
 
+    async function transferPal(sourceSave, palGuid) {
+        let no_set_loading_flag = LOADING_FLAG.value;
+        if (!no_set_loading_flag) LOADING_FLAG.value = true;
+        const PlayerUId = GET_PAL_OWNER_API_ID();
+        if (PlayerUId == PAL_BASE_WORKER_BTN.value) {
+            alert("Adding pals to basecamp is unsupported!");
+            return;
+        }
+        const response = await POST("/api/pal/transfer_pal", {
+            source_save: sourceSave,
+            pal_guid: palGuid,
+            target_player_uid: PlayerUId,
+        });
+
+        if (response === false) return;
+
+        if (response.status == 0) {
+            const pal_data = new PalData(response.data);
+            const temp_map = new Map();
+            PAL_MAP.value.forEach((v, k) => temp_map.set(k, v));
+            PAL_MAP.value.clear();
+            temp_map.forEach((v, k) => {
+                PAL_MAP.value.set(k, v);
+                if (v == SELECTED_PAL_DATA.value) {
+                    PAL_MAP.value.set(pal_data.InstanceId, pal_data);
+                }
+            });
+            SELECTED_PAL_ID.value = pal_data.InstanceId;
+            SELECTED_PAL_DATA.value = pal_data;
+        } else if (response.status == 2) {
+            alert("Unauthorized Access, Please Login. ");
+            IS_LOCKED.value = true;
+            reset();
+        } else {
+            alert(`- transferPal - Error occured: ${response.msg}`);
+        }
+
+        if (!no_set_loading_flag) LOADING_FLAG.value = false;
+    }
+
+    async function loadSourcePals(sourceSave) {
+        let no_set_loading_flag = LOADING_FLAG.value;
+        if (!no_set_loading_flag) LOADING_FLAG.value = true;
+        
+        try {
+            const response = await POST("/api/pal/source_pals", {
+                source_save: sourceSave
+            });
+            
+            if (!no_set_loading_flag) LOADING_FLAG.value = false;
+            return response;
+        } catch (error) {
+            if (!no_set_loading_flag) LOADING_FLAG.value = false;
+            console.error('Error loading source pals:', error);
+            return null;
+        }
+    }
+
     return {
         MAX_LEVEL,
         MAX_INVALID_LEVEL,
@@ -1448,5 +1506,7 @@ export const usePalEditorStore = defineStore("paleditor", () => {
 
         showDonate,
         shownDonate,
+        transferPal,
+        loadSourcePals,
     };
 });

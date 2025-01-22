@@ -4,6 +4,9 @@ from flask_jwt_extended import jwt_required
 import traceback
 import json
 from typing import Optional
+import tempfile
+import os
+import time
 
 from palworld_pal_editor.utils.util import reply
 
@@ -12,6 +15,9 @@ from palworld_pal_editor.utils import LOGGER
 from palworld_save_tools.json_tools import CustomEncoder
 
 pal_blueprint = Blueprint("pal", __name__)
+
+# 用于存储临时转移数据的字典
+_temp_transfer_data = {}
 
 
 # Update Pal Data
@@ -333,14 +339,8 @@ def source_pals():
 def transfer_pal():
     source_save = request.json.get("source_save")
     pal_guid = request.json.get("pal_guid")
-    target_player_uid = request.json.get("target_player_uid")
     
-    LOGGER.info("\n=== Starting Pal Transfer Process ===")
-    LOGGER.info(f"Source save path: {source_save}")
-    LOGGER.info(f"Target player UID: {target_player_uid}")
-    LOGGER.info(f"Pal GUID to transfer: {pal_guid}")
-    
-    if not all([source_save, pal_guid, target_player_uid]):
+    if not all([source_save, pal_guid]):
         LOGGER.error("Missing required parameters")
         return reply(1, None, "Missing required parameters")
     
@@ -349,112 +349,160 @@ def transfer_pal():
     try:
         # 获取当前存档的所有信息，用于后续恢复
         current_manager = SaveManager()
-        current_save = current_manager._file_path  # 使用正确的属性名
-        LOGGER.info(f"\nCurrent save path: {current_save}")
-        
-        current_players = []
-        for player in current_manager.get_players():
-            current_players.append({
-                'name': player.NickName,
-                'uid': str(player.PlayerUId)
-            })
-        LOGGER.info("\nCurrent save players:")
-        for player in current_players:
-            LOGGER.info(f"  Player: {player['name']} - {player['uid']}")
+        current_save = current_manager._file_path
         
         # 打开源存档并获取帕鲁数据
-        LOGGER.info("\n=== Opening Source Save and Getting Pal Data ===")
-        LOGGER.info(f"Opening source save at: {source_save}")
+        LOGGER.info(f"\nOpening source save at: {source_save}")
         current_manager.open(source_save)
         
+        # 查找并获取帕鲁数据
         source_pal = None
         for player in current_manager.get_players():
             if pal := player.get_pal(pal_guid, disable_warning=True):
                 source_pal = pal
-                LOGGER.info(f"\nFound source pal:")
-                LOGGER.info(f"  - Display Name: {pal.DisplayName}")
-                LOGGER.info(f"  - Character ID: {pal.CharacterID}")
-                LOGGER.info(f"  - Instance ID: {pal.InstanceId}")
-                LOGGER.info(f"  - Owner: {player.NickName} ({player.PlayerUId})")
-                LOGGER.info(f"  - Container ID: {pal.ContainerId}")
-                LOGGER.info(f"  - Slot Index: {pal.SlotIndex}")
+                LOGGER.info(f"\nFound pal: {pal.DisplayName} (Level {pal.Level})")
                 break
                 
         if not source_pal:
             LOGGER.error(f"Source pal {pal_guid} not found in source save")
-            # 重新打开原存档
-            LOGGER.info(f"\nReopening original save: {current_save}")
-            current_manager.open(current_save)
             return reply(1, None, f"Source pal {pal_guid} not found")
-            
-        # 获取并记录帕鲁的完整数据
+                
+        # 获取帕鲁的完整数据
         pal_data = source_pal.dump_obj()
-        LOGGER.info("\nPal data dump:")
-        LOGGER.info(pal_data)
         
         # 重新打开原存档
         LOGGER.info(f"\nReopening original save: {current_save}")
         current_manager.open(current_save)
         
-        # 验证原存档是否正确恢复
-        restored_players = current_manager.get_players()
-        LOGGER.info("\nVerifying restored save:")
-        for player in restored_players:
-            LOGGER.info(f"  Player: {player.NickName} - {player.PlayerUId}")
-        
-        return reply(0, _pal_data(source_pal))
+        # 直接返回dump数据
+        return reply(0, {"pal_data": pal_data})
             
     except Exception as e:
-        LOGGER.error("\n=== Transfer Failed ===")
         LOGGER.error(f"Error getting pal data: {traceback.format_exc()}")
         # 确保在发生错误时也恢复原存档
         if current_save:
-            LOGGER.info(f"\nReopening original save after error: {current_save}")
             try:
-                SaveManager().open(current_save)
+                current_manager.open(current_save)
             except Exception as restore_error:
                 LOGGER.error(f"Error restoring original save: {traceback.format_exc()}")
         return reply(1, None, f"Error getting pal data: {str(e)}")
-        
-    return reply(0)
 
 
-@pal_blueprint.route("/import_pal", methods=["POST"])
+@pal_blueprint.route("/complete_transfer", methods=["POST"])
 @jwt_required()
-def import_pal():
-    PlayerUId = request.json.get("PlayerUId")
+def complete_transfer():
+    player_uid = request.json.get("player_uid")
     pal_data = request.json.get("pal_data")
     
-    if PlayerUId == "PAL_BASE_WORKER_BTN":
+    if not all([player_uid, pal_data]):
+        return reply(1, None, "Missing required parameters")
+        
+    try:
+        # 直接调用import_pal的逻辑
+        return import_pal_internal(player_uid, pal_data)
+    except Exception as e:
+        LOGGER.error(f"Error completing transfer: {traceback.format_exc()}")
+        return reply(1, None, f"Error completing transfer: {str(e)}")
+
+
+def import_pal_internal(player_uid: str, pal_data: dict) -> dict:
+    """Internal function for importing pal data"""
+    if player_uid == "PAL_BASE_WORKER_BTN":
         LOGGER.warning("Directly importing pal to basecamp is not yet supported.")
         return reply(1, None, f"Directly importing pal to basecamp is not yet supported.")
     
     try:
+        # 记录接收到的数据类型和内容
+        LOGGER.info("\n=== Starting PAL Import Process ===")
+        LOGGER.info(f"Received player_uid: {player_uid}")
+        LOGGER.info(f"Received pal_data type: {type(pal_data)}")
+        
+        # 如果是字符串，尝试解析JSON
+        if isinstance(pal_data, str):
+            LOGGER.info("Received string data, attempting to parse JSON...")
+            try:
+                pal_data = json.loads(pal_data)
+                LOGGER.info("JSON parsing successful")
+            except json.JSONDecodeError as e:
+                LOGGER.error(f"Failed to parse JSON: {e}")
+                return reply(1, None, f"Invalid JSON format: {str(e)}")
+        
+        LOGGER.info(f"Processed pal_data type: {type(pal_data)}")
+        LOGGER.info(f"Processed pal_data content: {json.dumps(pal_data, indent=2) if pal_data else None}")
+        
+        # 验证帕鲁数据格式
+        if not isinstance(pal_data, dict):
+            LOGGER.error(f"Invalid pal data format: expected dict, got {type(pal_data)}")
+            LOGGER.error(f"Data content: {pal_data}")
+            return reply(1, None, f"Invalid pal data format: must be a JSON object, got {type(pal_data)}")
+            
+        # 验证帕鲁数据结构
+        LOGGER.info("\nValidating PAL data structure...")
+        
+        # 检查root层级
+        if not isinstance(pal_data, dict):
+            LOGGER.error("Root level validation failed")
+            LOGGER.error(f"Expected dict, got {type(pal_data)}")
+            return reply(1, None, "Invalid pal data structure: root must be an object")
+            
+        # 检查value字段
+        if "value" not in pal_data:
+            LOGGER.error("Missing 'value' field at root level")
+            LOGGER.error(f"Available keys: {list(pal_data.keys())}")
+            return reply(1, None, "Invalid pal data structure: missing 'value' field at root")
+            
+        # 检查RawData层级
+        current = pal_data.get("value", {})
+        LOGGER.info("Checking 'value' level structure...")
+        LOGGER.info(f"Keys available: {list(current.keys())}")
+        if not isinstance(current, dict) or "RawData" not in current:
+            LOGGER.error("Invalid 'RawData' structure")
+            LOGGER.error(f"Current data type: {type(current)}")
+            LOGGER.error(f"Available keys: {list(current.keys()) if isinstance(current, dict) else 'N/A'}")
+            return reply(1, None, "Invalid pal data structure: missing or invalid 'RawData' field")
+            
+        # 检查object层级
+        current = current.get("RawData", {}).get("value", {})
+        LOGGER.info("Checking 'RawData.value' level structure...")
+        LOGGER.info(f"Keys available: {list(current.keys())}")
+        if not isinstance(current, dict) or "object" not in current:
+            LOGGER.error("Invalid 'object' structure")
+            LOGGER.error(f"Current data type: {type(current)}")
+            LOGGER.error(f"Available keys: {list(current.keys()) if isinstance(current, dict) else 'N/A'}")
+            return reply(1, None, "Invalid pal data structure: missing or invalid 'object' field")
+            
+        # 检查SaveParameter层级
+        current = current.get("object", {})
+        LOGGER.info("Checking 'object' level structure...")
+        LOGGER.info(f"Keys available: {list(current.keys())}")
+        if not isinstance(current, dict) or "SaveParameter" not in current:
+            LOGGER.error("Invalid 'SaveParameter' structure")
+            LOGGER.error(f"Current data type: {type(current)}")
+            LOGGER.error(f"Available keys: {list(current.keys()) if isinstance(current, dict) else 'N/A'}")
+            return reply(1, None, "Invalid pal data structure: missing or invalid 'SaveParameter' field")
+        
+        LOGGER.info("\nPAL data structure validation passed")
+        
         # 获取目标玩家信息
-        target_player = SaveManager().get_player(PlayerUId)
+        target_player = SaveManager().get_player(player_uid)
         if not target_player:
-            return reply(1, None, f"Target player {PlayerUId} not found")
+            LOGGER.error(f"Target player {player_uid} not found")
+            return reply(1, None, f"Target player {player_uid} not found")
             
         # 记录目标玩家信息
-        LOGGER.info(f"Target player info:")
+        LOGGER.info(f"\nTarget player info:")
         LOGGER.info(f"  - Name: {target_player.NickName}")
         LOGGER.info(f"  - PlayerUId: {target_player.PlayerUId}")
         LOGGER.info(f"  - GroupId: {target_player.group_id}")
-        
-        # 记录原始数据结构
-        LOGGER.info("Original import data structure:")
-        LOGGER.info(json.dumps(pal_data, cls=CustomEncoder, indent=2))
         
         # 首先创建一个基础PAL实体
         LOGGER.info("\nCreating base PAL entity...")
         base_pal = SaveManager().add_pal(str(target_player.PlayerUId), None, is_import=True)
         if not base_pal:
+            LOGGER.error("Failed to create base PAL entity")
             return reply(1, None, "Failed to create base PAL entity")
         
-        # 获取基础PAL的数据结构
         base_data = base_pal._pal_obj
-        LOGGER.info("\nBase PAL structure:")
-        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
         
         # 从导入数据中提取关键信息
         import_param = pal_data.get("value", {}).get("RawData", {}).get("value", {}).get("object", {}).get("SaveParameter", {}).get("value", {})
@@ -488,18 +536,12 @@ def import_pal():
             "value": import_param.get("NickName", {}).get("value", "Imported PAL")
         }
         
-        LOGGER.info("\nFinal PAL structure:")
-        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
-        
         # 使用更新后的数据重新创建PAL实体
         LOGGER.info("\nRecreating PAL entity with updated data...")
         pal_entity = SaveManager().add_pal(str(target_player.PlayerUId), base_data, is_import=True)
         if not pal_entity:
-            return reply(
-                1,
-                None,
-                f"Failed importing pal, likely your pal containers are full, check logs for detail.",
-            )
+            LOGGER.error("Failed to recreate PAL entity")
+            return reply(1, None, f"Failed importing pal, likely your pal containers are full, check logs for detail.")
             
         # 删除原始的基础PAL
         LOGGER.info("\nCleaning up base PAL...")
@@ -509,66 +551,18 @@ def import_pal():
         LOGGER.info(f"  - NickName: {pal_entity.NickName}")
         LOGGER.info(f"  - group_id: {pal_entity.group_id}")
         LOGGER.info(f"  - OwnerPlayerUId: {pal_entity.OwnerPlayerUId}")
+        
+        return reply(0, _pal_data(pal_entity))
             
     except Exception as e:
         stack_trace = traceback.format_exc()
         LOGGER.error(f"Error importing pal: {stack_trace}")
-        return reply(
-            1,
-            None,
-            f"Error happened during importing pal, check logs for detail. {stack_trace}",
-        )
-    
-    return reply(0, _pal_data(pal_entity))
+        return reply(1, None, f"Error happened during importing pal, check logs for detail. {stack_trace}")
 
 
-def import_pal(target_player: PlayerEntity, import_data: dict) -> Optional[PalEntity]:
-    """Import a pal from json data"""
-    LOGGER.info("=== Start import_pal ===")
-    try:
-        # 记录原始数据结构
-        LOGGER.info("Original import data structure:")
-        LOGGER.info(json.dumps(import_data, cls=CustomEncoder, indent=2))
-        
-        # 首先创建一个基础PAL实体
-        base_pal = SaveManager().add_pal(str(target_player.PlayerUId), None, is_import=True)
-        if not base_pal:
-            raise Exception("Failed to create base PAL entity")
-        
-        base_data = base_pal._pal_obj
-        LOGGER.info("\nBase PAL structure:")
-        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
-        
-        # 从导入数据中提取关键信息
-        pal_data = import_data.get("value", {}).get("RawData", {}).get("value", {}).get("object", {}).get("SaveParameter", {}).get("value", {})
-        
-        # 更新基本属性
-        for key in ["CharacterID", "Gender", "NickName", "Level", "Exp", "HP", "FullStomach"]:
-            if key in pal_data:
-                base_pal._pal_param[key] = pal_data[key]
-        
-        # 确保数组属性存在并正确初始化
-        array_properties = ["EquipWaza", "MasteredWaza", "PassiveSkillList", "EquipItem"]
-        for prop in array_properties:
-            if prop in pal_data:
-                base_pal._pal_param[prop] = pal_data[prop]
-            else:
-                base_pal._pal_param[prop] = PalObjects.ArrayProperty("EnumProperty", {"values": []})
-        
-        # 处理状态点数据
-        status_lists = ["GotStatusPointList", "GotExStatusPointList"]
-        for status_list in status_lists:
-            if status_list in pal_data:
-                base_pal._pal_param[status_list] = pal_data[status_list]
-        
-        LOGGER.info("\nFinal PAL structure:")
-        LOGGER.info(json.dumps(base_data, cls=CustomEncoder, indent=2))
-        
-        # 使用更新后的数据重新创建PAL实体
-        return base_pal
-        
-    except Exception as e:
-        LOGGER.error(f"Failed to import pal: {traceback.format_exc()}")
-        return None
-    finally:
-        LOGGER.info("=== End import_pal ===\n")
+@pal_blueprint.route("/import_pal", methods=["POST"])
+@jwt_required()
+def import_pal():
+    PlayerUId = request.json.get("PlayerUId")
+    pal_data = request.json.get("pal_data")
+    return import_pal_internal(PlayerUId, pal_data)

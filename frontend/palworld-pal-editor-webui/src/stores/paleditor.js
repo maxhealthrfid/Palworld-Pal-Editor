@@ -1354,39 +1354,61 @@ export const usePalEditorStore = defineStore("paleditor", () => {
     if (!no_set_loading_flag) LOADING_FLAG.value = true;
     const PlayerUId = GET_PAL_OWNER_API_ID();
     if (PlayerUId == PAL_BASE_WORKER_BTN.value) {
-      alert("Adding pals to basecamp is unsupported!");
-      return;
+        alert("Adding pals to basecamp is unsupported!");
+        return;
     }
-    const response = await POST("/api/pal/transfer_pal", {
-      source_save: sourceSave,
-      pal_guid: palGuid,
-      target_player_uid: PlayerUId,
-    });
 
-    if (response === false) return;
+    try {
+        // 第一步：获取帕鲁数据
+        const transferResponse = await POST("/api/pal/transfer_pal", {
+            source_save: sourceSave,
+            pal_guid: palGuid
+        });
 
-    if (response.status == 0) {
-      const pal_data = new PalData(response.data);
-      const temp_map = new Map();
-      PAL_MAP.value.forEach((v, k) => temp_map.set(k, v));
-      PAL_MAP.value.clear();
-      temp_map.forEach((v, k) => {
-        PAL_MAP.value.set(k, v);
-        if (v == SELECTED_PAL_DATA.value) {
-          PAL_MAP.value.set(pal_data.InstanceId, pal_data);
+        if (transferResponse === false) return;
+
+        if (transferResponse.status !== 0) {
+            if (transferResponse.status === 2) {
+                alert("Unauthorized Access, Please Login. ");
+                IS_LOCKED.value = true;
+                reset();
+            } else {
+                alert(`Error getting pal data: ${transferResponse.msg}`);
+            }
+            return;
         }
-      });
-      SELECTED_PAL_ID.value = pal_data.InstanceId;
-      SELECTED_PAL_DATA.value = pal_data;
-    } else if (response.status == 2) {
-      alert("Unauthorized Access, Please Login. ");
-      IS_LOCKED.value = true;
-      reset();
-    } else {
-      alert(`- transferPal - Error occured: ${response.msg}`);
-    }
 
-    if (!no_set_loading_flag) LOADING_FLAG.value = false;
+        // 第二步：导入帕鲁
+        const importResponse = await POST("/api/pal/complete_transfer", {
+            player_uid: PlayerUId,
+            pal_data: transferResponse.data.pal_data  // 从response.data.pal_data获取数据
+        });
+
+        if (importResponse === false) return;
+
+        if (importResponse.status === 0) {
+            const pal_data = new PalData(importResponse.data);
+            const temp_map = new Map();
+            PAL_MAP.value.forEach((v, k) => temp_map.set(k, v));
+            PAL_MAP.value.clear();
+            temp_map.forEach((v, k) => PAL_MAP.value.set(k, v));
+            PAL_MAP.value.set(pal_data.InstanceId, pal_data);
+            SELECTED_PAL_ID.value = pal_data.InstanceId;
+            SELECTED_PAL_DATA.value = pal_data;
+            alert("帕鲁转移成功！");
+        } else if (importResponse.status === 2) {
+            alert("Unauthorized Access, Please Login. ");
+            IS_LOCKED.value = true;
+            reset();
+        } else {
+            alert(`Error importing pal: ${importResponse.msg}`);
+        }
+    } catch (error) {
+        console.error('Transfer failed:', error);
+        alert('Transfer failed. Please check the console for details.');
+    } finally {
+        if (!no_set_loading_flag) LOADING_FLAG.value = false;
+    }
   }
 
   async function loadSourcePals(sourceSave) {

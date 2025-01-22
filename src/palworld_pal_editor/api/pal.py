@@ -682,13 +682,20 @@ def import_pal_internal(player_uid: str, pal_data: dict) -> dict:
         # 更新其他属性
         update_keys = ["CharacterID", "Level", "Rank", "Rank_HP", "Rank_Attack", "Rank_Defence", 
                       "Rank_CraftSpeed", "Talent_HP", "Talent_Melee", "Talent_Shot", "Talent_Defense",
-                      "PassiveSkillList", "EquipWaza", "MasteredWaza", "Gender", "HasTowerVariant"]
+                      "PassiveSkillList", "EquipWaza", "MasteredWaza", "Gender", "HasTowerVariant",
+                      "IsRarePal"]
                       
         LOGGER.info("\nUpdating PAL properties...")
         for key in update_keys:
             if key in import_param:
                 LOGGER.info(f"  - Updating {key}")
                 base_param[key] = copy.deepcopy(import_param[key])
+                # 如果是闪光宠物，确保 CharacterID 不包含 BOSS_ 前缀
+                if key == "IsRarePal" and import_param[key].get("value", False):
+                    if "BOSS_" in base_param["CharacterID"]["value"]:
+                        base_param["CharacterID"]["value"] = base_param["CharacterID"]["value"].replace("BOSS_", "")
+                    elif "Boss_" in base_param["CharacterID"]["value"]:
+                        base_param["CharacterID"]["value"] = base_param["CharacterID"]["value"].replace("Boss_", "")
         
         # 恢复保留的值
         for key, value in preserved_values.items():
@@ -697,7 +704,7 @@ def import_pal_internal(player_uid: str, pal_data: dict) -> dict:
         # 设置昵称
         base_param["NickName"] = {
             "type": "StrProperty",
-            "value": import_param.get("NickName", {}).get("value", "Imported PAL")
+            "value": import_param.get("NickName", {}).get("value", "")
         }
         
         # 使用更新后的数据重新创建PAL实体

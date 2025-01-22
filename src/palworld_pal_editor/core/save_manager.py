@@ -6,6 +6,7 @@ import traceback
 from typing import Optional
 import uuid
 import json
+import os
 
 from palworld_save_tools.gvas import GvasFile
 from palworld_save_tools.archive import FArchiveReader, FArchiveWriter, UUID
@@ -523,23 +524,19 @@ class SaveManager:
         file_path: Path = output_path / "Level.sav"
         LOGGER.info(f"Target Level.sav path: {file_path}")
 
-        if output_path.exists():
-            BK_FOLDER_NAME = "Palworld-Pal-Editor-Backup"
-            backup_dir = output_path.parent / f"{BK_FOLDER_NAME}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            try:
-                if output_path.exists():
-                    LOGGER.info(f"Creating backup:")
-                    LOGGER.info(f"  - Source: {output_path}")
-                    LOGGER.info(f"  - Destination: {backup_dir}")
-                    shutil.copytree(self._file_path, backup_dir, 
-                                    ignore=lambda dir, files: [f for f in files if not f == "Players" and not f.endswith('.sav')])
-                    LOGGER.info("Backup completed successfully")
-                else:
-                    LOGGER.info(f"No existing directory to backup: {output_path}")
-            except Exception as e:
-                LOGGER.error(f"Error backing up directory: {e}")
-                LOGGER.error(f"Stack trace: {traceback.format_exc()}")
-                return False
+        # 检查并删除可能存在的临时文件
+        temp_files = [
+            output_path / "temp_save.sav",
+            Path(os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache", "transfer_cache.json"))
+        ]
+        
+        for temp_file in temp_files:
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                    LOGGER.info(f"Removed existing temporary file: {temp_file}")
+                except Exception as e:
+                    LOGGER.warning(f"Failed to remove existing temporary file: {e}")
 
         LOGGER.info("\nSaving Player Data...")
         player_count = len(self.player_mapping.values())
@@ -552,32 +549,6 @@ class SaveManager:
         LOGGER.info("Creating deep copy of gvas_file")
         gvas_file = copy.deepcopy(self.gvas_file)
         
-        LOGGER.info("\n=== GVAS File Structure Before Compression ===")
-        LOGGER.info(f"Properties to skip: {MAIN_SKIP_PROPERTIES}")
-        
-        # 记录GVAS文件的基本属性
-        LOGGER.info("\nGVAS File Basic Info:")
-        LOGGER.info(f"  - Header: {getattr(gvas_file, 'header', 'N/A')}")
-        LOGGER.info(f"  - Save Game Version: {getattr(gvas_file, 'save_game_version', 'N/A')}")
-        LOGGER.info(f"  - Package Version: {getattr(gvas_file, 'package_version', 'N/A')}")
-        LOGGER.info(f"  - Engine Version Major: {getattr(gvas_file, 'engine_version_major', 'N/A')}")
-        LOGGER.info(f"  - Engine Version Minor: {getattr(gvas_file, 'engine_version_minor', 'N/A')}")
-        
-        # 记录主要属性
-        LOGGER.info("\nGVAS File Properties:")
-        try:
-            if hasattr(gvas_file, 'properties'):
-                for prop_name, prop_value in gvas_file.properties.items():
-                    LOGGER.info(f"\nProperty: {prop_name}")
-                    if isinstance(prop_value, dict):
-                        # 只记录第一层的键，避免过深的嵌套
-                        LOGGER.info(f"Keys: {list(prop_value.keys())}")
-                    else:
-                        LOGGER.info(f"Value: {prop_value}")
-        except Exception as prop_err:
-            LOGGER.error(f"Error dumping properties: {prop_err}")
-            LOGGER.error(traceback.format_exc())
-            
         # 尝试写入并记录结果
         LOGGER.info("\nAttempting to write GVAS file...")
         try:
@@ -599,6 +570,16 @@ class SaveManager:
             with file_path.open("wb") as file:
                 file.write(sav_data)
             LOGGER.info("File written successfully")
+            
+            # 再次清理所有临时文件
+            for temp_file in temp_files:
+                if temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                        LOGGER.info(f"Cleaned up temporary file: {temp_file}")
+                    except Exception as e:
+                        LOGGER.warning(f"Failed to clean up temporary file {temp_file}: {e}")
+                        
         except Exception as e:
             LOGGER.error(f"Error writing save file: {e}")
             LOGGER.error(f"Stack trace: {traceback.format_exc()}")

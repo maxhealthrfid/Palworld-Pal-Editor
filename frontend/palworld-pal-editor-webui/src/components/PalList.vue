@@ -124,6 +124,7 @@ function closeTransferDialog() {
   palGuid.value = "";
   sourcePals.value = [];
   selectedPals.value = [];
+  showSourcePalPicker.value = false;
 }
 
 async function loadSourcePals() {
@@ -267,9 +268,15 @@ async function confirmTransfer() {
     </div>
 
     <!-- Transfer Dialog -->
-    <div v-if="showTransfer" class="transfer-dialog">
+    <div
+      v-if="showTransfer"
+      class="transfer-dialog"
+      @click.self="closeTransferDialog">
       <div class="transfer-content">
-        <h3>从其他存档转移帕鲁</h3>
+        <div class="dialog-header">
+          <h3>从其他存档转移帕鲁</h3>
+          <button class="close-btn" @click="closeTransferDialog">×</button>
+        </div>
         <div class="input-group">
           <label>源存档路径：</label>
           <div class="path-input">
@@ -301,16 +308,27 @@ async function confirmTransfer() {
               class="pal-item"
               :class="{ selected: selectedPals.includes(pal.InstanceId) }"
               @click="togglePalSelection(pal.InstanceId)">
+              <div class="pal-icon">
+                <img
+                  :src="`/image/pals/${pal.IconAccessKey}`"
+                  :alt="pal.DisplayName" />
+              </div>
               <div class="pal-info">
                 <span class="pal-name">{{ pal.DisplayName }}</span>
-                <span class="pal-level">等级 {{ pal.Level }}</span>
+                <div class="pal-details">
+                  <span class="pal-level">Lv.{{ pal.Level }}</span>
+                  <span class="pal-gender" v-if="pal.Gender">{{
+                    pal.Gender === 1 ? "♂" : "♀"
+                  }}</span>
+                  <span class="pal-rank" v-if="pal.Rank">★{{ pal.Rank }}</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
         <div class="dialog-buttons">
-          <button @click="closeTransfer">取消</button>
+          <button @click="closeTransferDialog">取消</button>
           <button
             @click="confirmTransfer"
             :disabled="selectedPals.length === 0">
@@ -625,32 +643,76 @@ button.add_pal:disabled {
 .pal-item {
   background: #333;
   padding: 1rem;
-  border-radius: 4px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border: 2px solid transparent;
 }
 
 .pal-item:hover {
   background: #444;
+  border-color: #666;
 }
 
 .pal-item.selected {
   background: #1b49b4;
+  border-color: #3365da;
+}
+
+.pal-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.pal-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .pal-info {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .pal-name {
   font-weight: bold;
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pal-details {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #aaa;
 }
 
 .pal-level {
-  font-size: 0.9rem;
-  color: #aaa;
+  padding: 0.2rem 0.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.pal-gender {
+  color: #ff69b4;
+}
+
+.pal-rank {
+  color: #ffd700;
 }
 
 .dialog-buttons {
@@ -753,5 +815,27 @@ button.add_pal:disabled {
   padding: 10px;
   font-family: monospace;
   resize: vertical;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: #ff4444;
 }
 </style>
